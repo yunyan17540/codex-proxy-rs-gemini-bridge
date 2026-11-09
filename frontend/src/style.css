@@ -1,0 +1,25 @@
+:root { font-family: var(--cp-font-family); color: var(--cp-color-text); background: transparent; }
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 0; min-height: inherit; font-size: var(--cp-font-size); }
+#app { min-height: inherit; min-width: 0; }
+.stack { display: grid; gap: 16px; min-width: 0; }
+.bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.panel { padding: 18px; min-width: 0; }
+.section-title { font-size: 14px; font-weight: 650; margin: 0 0 12px; }
+.muted { color: var(--cp-color-text-secondary); font-size: 12px; line-height: 1.65; }
+.notice { padding: 10px 14px; border-radius: 8px; background: var(--cp-color-success-container); color: var(--cp-color-success-text); line-height: 1.65; }
+.error { padding: 10px 14px; border-radius: 8px; background: var(--cp-color-error-container); color: var(--cp-color-error-text); line-height: 1.65; }
+.metrics { display: flex; gap: 24px; flex-wrap: wrap; }
+.metric { display: grid; gap: 4px; min-width: 90px; }
+.metric strong { font-size: 20px; font-weight: 650; }
+.metric span { font-size: 12px; color: var(--cp-color-text-secondary); }
+.rows { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
+.account { padding: 10px 12px; background: var(--cp-color-fill-quaternary); border-radius: 8px; overflow-wrap: anywhere; }
+.model-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.model { font-family: var(--cp-font-family-code); font-size: 12px; padding: 6px 9px; border-radius: 6px; background: var(--cp-color-fill-quaternary); overflow-wrap: anywhere; }
+.field { display: grid; gap: 6px; }
+.field label { font-size: 12px; color: var(--cp-color-text-secondary); }
+.url { display: block; overflow-wrap: anywhere; color: var(--cp-color-link); line-height: 1.6; }
+.fine-print { margin: 0; font-size: 12px; line-height: 1.65; color: var(--cp-color-text-secondary); }
+@media(max-width: 520px) { .panel { padding: 14px; } .metrics { gap: 16px; } }

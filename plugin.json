@@ -1,0 +1,64 @@
+{
+  "manifestVersion": 2,
+  "publisher": "local",
+  "name": "gemini-bridge",
+  "displayName": "Gemini 谷歌账号",
+  "version": "0.1.5",
+  "description": "通过本机 CLIProxyAPI 的 Antigravity / Code Assist 授权接入 Gemini 模型",
+  "license": "MIT",
+  "engines": {
+    "codex-proxy-rs": "=3.41.2"
+  },
+  "main": "bin/gemini-bridge.exe",
+  "runtime": "trustedProcess",
+  "contributes": {
+    "management": {
+      "version": 2
+    },
+    "maintenance": {}
+  },
+  "configurationSchema": {
+    "type": "object",
+    "properties": {
+      "dataDirectory": {
+        "type": "string",
+        "title": "账号数据目录（绝对路径）",
+        "description": "例如 E:\\codex-proxy-rs-windows\\gemini-data",
+        "minLength": 3
+      },
+      "port": {
+        "type": "integer",
+        "title": "本机中转端口",
+        "default": 18764,
+        "minimum": 1024,
+        "maximum": 65535
+      },
+      "proxyUrl": {
+        "type": "string",
+        "title": "Google 出站代理，留空直连",
+        "default": "http://127.0.0.1:7890"
+      }
+    },
+    "additionalProperties": false,
+    "required": [
+      "dataDirectory",
+      "port",
+      "proxyUrl"
+    ]
+  },
+  "secretFields": [
+    "proxyUrl"
+  ],
+  "resources": {
+    "web/index.html": "text/html",
+    "web/app.js": "text/javascript",
+    "web/app.css": "text/css",
+    "engine/cli-proxy-api.exe": "application/octet-stream",
+    "engine/plugins/gemini-cli.dll": "application/octet-stream",
+    "legal/CLIProxyAPI-LICENSE.txt": "text/plain",
+    "legal/GeminiCLI-LICENSE.txt": "text/plain",
+    "legal/SDK-Apache-2.0.txt": "text/plain",
+    "legal/GeminiBridge-LICENSE.txt": "text/plain",
+    "legal/NOTICE.md": "text/plain"
+  }
+}

@@ -1,0 +1,15 @@
+/target/
+/dist-package/
+/engine/
+/frontend/node_modules/
+/.tools/
+/.env
+/.env.*
+**/__pycache__/
+*.log
+*.tmp
+*.pdb
+bridge-keys.json
+/auth/
+*.diagnostic
+/google-module/internal/auth/oauth_client.generated.go
