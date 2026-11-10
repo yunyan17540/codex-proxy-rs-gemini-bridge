@@ -16,6 +16,15 @@ body { margin: 0; min-width: 0; min-height: inherit; font-size: var(--cp-font-si
 .metric span { font-size: 12px; color: var(--cp-color-text-secondary); }
 .rows { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
 .account { padding: 10px 12px; background: var(--cp-color-fill-quaternary); border-radius: 8px; overflow-wrap: anywhere; }
+.account-help { margin-bottom: 12px; }
+.account-identity { display: grid; gap: 5px; min-width: 0; }
+.account-identity strong { font-size: 14px; }
+.account-state { font-size: 12px; color: var(--cp-color-text-secondary); }
+.account-state.active { color: var(--cp-color-success-text); }
+.account-state.reauth_required,.account-state.error { color: var(--cp-color-error-text); }
+.account-detail { margin-top: 10px; }
+.delete-confirm { margin-top: 12px; padding: 12px; border: 1px solid var(--cp-color-error-text); border-radius: 8px; }
+.delete-confirm p { margin: 0 0 10px; font-size: 13px; line-height: 1.65; }
 .model-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .model { font-family: var(--cp-font-family-code); font-size: 12px; padding: 6px 9px; border-radius: 6px; background: var(--cp-color-fill-quaternary); overflow-wrap: anywhere; }
 .field { display: grid; gap: 6px; }

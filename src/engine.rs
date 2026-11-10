@@ -8,7 +8,7 @@ use gateway_plugin_sdk::{Handshake, PluginFault};
 use reqwest::{Client, Method};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::{fs, net::TcpListener, path::PathBuf, time::Duration};
+use std::{collections::BTreeMap, fs, net::TcpListener, path::PathBuf, time::Duration};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
@@ -18,12 +18,22 @@ pub struct Settings {
     pub data_directory: String,
     pub port: u16,
     pub proxy_url: String,
+    #[serde(default)]
+    pub account_port: Option<u16>,
 }
 
 #[derive(Deserialize, Serialize)]
 struct Keys {
     client: String,
     management: String,
+    #[serde(default)]
+    accounts: BTreeMap<String, ScopedKey>,
+}
+
+#[derive(Deserialize, Serialize)]
+struct ScopedKey {
+    key: String,
+    enabled: bool,
 }
 
 pub struct Bridge {
@@ -34,10 +44,12 @@ pub struct Bridge {
     client: Client,
     process: Option<EngineProcess>,
     keys: Option<Keys>,
+    relay: Option<crate::relay::AccountRelay>,
     pub oauth_state: Option<String>,
     pub oauth_url: Option<String>,
     pub oauth_redirect: Option<String>,
     pub oauth_provider: Option<crate::oauth::LoginProvider>,
+    pub oauth_account: Option<String>,
     pub last_login_error: Option<String>,
     oauth_poll: Option<JoinHandle<Result<Value, PluginFault>>>,
 }
@@ -88,10 +100,12 @@ impl Bridge {
             client,
             process: None,
             keys: None,
+            relay: None,
             oauth_state: None,
             oauth_url: None,
             oauth_redirect: None,
             oauth_provider: None,
+            oauth_account: None,
             last_login_error: None,
             oauth_poll: None,
         })
@@ -107,15 +121,123 @@ impl Bridge {
             .ok_or_else(|| fault("Gemini 引擎尚未启动"))
     }
 
+    pub fn account_port(&self) -> Result<u16, PluginFault> {
+        let port = self
+            .settings
+            .account_port
+            .or_else(|| self.settings.port.checked_add(1))
+            .ok_or_else(|| fault("请配置独立账号连接端口"))?;
+        if port < 1024 || port == self.settings.port {
+            return Err(fault("独立账号连接端口无效或与引擎端口重复"));
+        }
+        Ok(port)
+    }
+
+    pub fn account_base_url(&self, id: &str) -> Result<String, PluginFault> {
+        if !crate::accounts::valid_id(id) {
+            return Err(fault("Google 账号标识无效"));
+        }
+        Ok(format!(
+            "http://127.0.0.1:{}/accounts/{id}/v1",
+            self.account_port()?
+        ))
+    }
+
+    fn ensure_relay(&mut self) -> Result<(), PluginFault> {
+        if self.relay.is_none() {
+            let relay = crate::relay::AccountRelay::start(
+                self.account_port()?,
+                self.base_url(),
+                self.client_key()?.to_owned(),
+            )
+            .map_err(|_| fault("独立账号连接端口被占用，请检查插件设置"))?;
+            if let Some(keys) = &self.keys {
+                for (id, value) in &keys.accounts {
+                    relay.set(id, &value.key, value.enabled);
+                }
+            }
+            self.relay = Some(relay);
+        }
+        Ok(())
+    }
+
+    fn persist_keys(&self) -> Result<(), PluginFault> {
+        fs::write(
+            self.directory.join("bridge-keys.json"),
+            serde_json::to_vec(
+                self.keys
+                    .as_ref()
+                    .ok_or_else(|| fault("Gemini 引擎尚未启动"))?,
+            )
+            .map_err(|_| fault("本机账号连接密钥编码失败"))?,
+        )
+        .map_err(|_| fault("无法保存本机账号连接密钥"))
+    }
+
+    pub fn account_key(&mut self, id: &str, enabled: bool) -> Result<String, PluginFault> {
+        if !crate::accounts::valid_id(id) {
+            return Err(fault("Google 账号标识无效"));
+        }
+        let keys = self
+            .keys
+            .as_mut()
+            .ok_or_else(|| fault("Gemini 引擎尚未启动"))?;
+        let value = keys.accounts.entry(id.into()).or_insert_with(|| ScopedKey {
+            key: format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple()),
+            enabled,
+        });
+        value.enabled = enabled;
+        let key = value.key.clone();
+        self.persist_keys()?;
+        self.ensure_relay()?;
+        if let Some(relay) = &self.relay {
+            relay.set(id, &key, enabled);
+        }
+        Ok(key)
+    }
+
+    pub fn refresh_account_routes(
+        &mut self,
+        accounts: &[crate::accounts::Account],
+    ) -> Result<(), PluginFault> {
+        let ids: Vec<_> = self
+            .keys
+            .as_ref()
+            .map(|k| k.accounts.keys().cloned().collect())
+            .unwrap_or_default();
+        for id in ids {
+            if let Some(account) = accounts.iter().find(|a| a.id == id) {
+                self.account_key(
+                    &id,
+                    !account.disabled && !account.requires_reauth && !account.models.is_empty(),
+                )?;
+            } else {
+                self.remove_account_route(&id)?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn remove_account_route(&mut self, id: &str) -> Result<(), PluginFault> {
+        if let Some(relay) = &self.relay {
+            relay.remove(id);
+        }
+        if let Some(keys) = &mut self.keys {
+            keys.accounts.remove(id);
+        }
+        self.persist_keys()
+    }
+
     pub async fn ensure_started(&mut self) -> Result<(), PluginFault> {
         if let Some(process) = &mut self.process {
             if process
                 .running()
                 .map_err(|_| fault("无法读取 Gemini 引擎状态"))?
             {
-                return Ok(());
+                return self.ensure_relay();
             }
             self.process = None;
+            self.relay = None;
             self.reset_oauth();
         }
         let listener = TcpListener::bind(("127.0.0.1", self.settings.port)).map_err(|error| {
@@ -136,6 +258,7 @@ impl Bridge {
             let keys = Keys {
                 client: format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple()),
                 management: format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple()),
+                accounts: BTreeMap::new(),
             };
             fs::write(
                 &keys_path,
@@ -176,7 +299,7 @@ impl Bridge {
                 .await
                 .is_ok()
             {
-                return Ok(());
+                return self.ensure_relay();
             }
             if let Some(process) = &mut self.process
                 && !process.running().map_err(|_| fault("无法读取引擎进程"))?
@@ -292,6 +415,7 @@ impl Bridge {
         self.oauth_url = None;
         self.oauth_redirect = None;
         self.oauth_provider = None;
+        self.oauth_account = None;
     }
 
     pub fn process_id(&self) -> Option<u32> {
@@ -346,19 +470,23 @@ mod tests {
                 data_directory: "C:\\test".into(),
                 port,
                 proxy_url: String::new(),
+                account_port: None,
             },
             directory: PathBuf::new(),
             package: PathBuf::new(),
             client: Client::builder().no_proxy().build().expect("test HTTP"),
             process: None,
+            relay: None,
             keys: Some(Keys {
                 client: "test-client".into(),
                 management: "test-management".into(),
+                accounts: BTreeMap::new(),
             }),
             oauth_state: Some("test-state".into()),
             oauth_url: None,
             oauth_redirect: None,
             oauth_provider: None,
+            oauth_account: None,
             last_login_error: None,
             oauth_poll: None,
         };

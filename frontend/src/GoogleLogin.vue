@@ -5,22 +5,35 @@ import { ZCard } from '@codex-proxy/ui/card'
 import { ZInput } from '@codex-proxy/ui/input'
 import { ZTextarea } from '@codex-proxy/ui/textarea'
 import { useGoogleLogin } from './useGoogleLogin'
+import type { GoogleAccount } from './api'
 
-const emit = defineEmits<{ complete: [] }>()
-const props = defineProps<{ pendingUrl: string | null; pendingProvider: 'antigravity' | 'gemini-cli' | null; lastError: string | null }>()
+const emit = defineEmits<{ complete: []; pending: [value: boolean] }>()
+const props = defineProps<{ pendingUrl: string | null; pendingProvider: 'antigravity' | 'gemini-cli' | null; pendingAccount: GoogleAccount | null; lastError: string | null }>()
 const provider = shallowRef<'antigravity' | 'gemini-cli'>('antigravity')
 const projectId = shallowRef('')
 const callbackUrl = shallowRef('')
+const targetLabel = shallowRef('')
 const { url, busy, waiting, error, message, start, cancel, callback, open, resume } = useGoogleLogin(() => emit('complete'))
 watch(() => props.pendingUrl, value => { if (value) resume(value) }, { immediate: true })
 watch(() => props.pendingProvider, value => { if (value) provider.value = value }, { immediate: true })
 watch(() => props.lastError, value => { if (value) error.value = value }, { immediate: true })
+watch(() => props.pendingAccount, value => { if (value) targetLabel.value = value.email || value.id }, { immediate: true })
+watch([busy, waiting], ([working, pending]) => emit('pending', working || pending), { immediate: true })
+async function reauthorize(account: GoogleAccount) {
+  if (waiting.value || busy.value) return
+  targetLabel.value = account.email || account.id
+  provider.value = account.provider === 'antigravity' ? 'antigravity' : 'gemini-cli'
+  await start(provider.value, '', account.id)
+}
+async function add() { targetLabel.value = ''; await start(provider.value, provider.value === 'gemini-cli' ? projectId.value : '') }
+defineExpose({ reauthorize })
 </script>
 
 <template>
   <ZCard padding="none" class="panel">
     <div class="stack">
-      <div><h2 class="section-title">添加 Google 账号</h2><p class="fine-print">个人账号使用 Antigravity 授权，可用模型与额度取决于 Google 实际授权</p></div>
+      <div><h2 class="section-title">{{ targetLabel && waiting ? '重新授权 Google 账号' : '添加 Google 账号' }}</h2><p class="fine-print">个人账号使用 Antigravity 授权，可用模型与额度取决于 Google 实际授权</p></div>
+      <p v-if="targetLabel && waiting" class="notice">正在重新授权 {{ targetLabel }}，请登录同一个 Google 账号。账号连接和历史用量会保留。</p>
       <div class="actions" aria-label="Google 登录通道">
         <ZButton :type="provider === 'antigravity' ? 'primary' : undefined" :aria-pressed="provider === 'antigravity'" :disabled="waiting || busy" @click="provider = 'antigravity'">个人账号 · Antigravity</ZButton>
         <ZButton :type="provider === 'gemini-cli' ? 'primary' : undefined" :aria-pressed="provider === 'gemini-cli'" :disabled="waiting || busy" @click="provider = 'gemini-cli'">Code Assist Standard / Enterprise</ZButton>
@@ -31,7 +44,7 @@ watch(() => props.lastError, value => { if (value) error.value = value }, { imme
         <p class="fine-print">需要有效的 Standard / Enterprise 服务资格；新建项目不会自动获得订阅。该模块会尝试为关联项目启用实验性预览渠道</p>
       </template>
       <div class="actions">
-        <ZButton type="primary" :loading="busy" :disabled="waiting" @click="start(provider, provider === 'gemini-cli' ? projectId : '')">生成 Google 授权链接</ZButton>
+        <ZButton type="primary" :loading="busy" :disabled="waiting" @click="add">添加账号并生成授权链接</ZButton>
         <ZButton :disabled="busy" @click="cancel">取消等待中的授权</ZButton>
       </div>
       <template v-if="url">

@@ -5,16 +5,31 @@ export interface PluginBridge {
 }
 declare global { interface Window { readonly codexProxyPlugin?: PluginBridge } }
 
+export interface GoogleAccount {
+  id: string
+  email: string | null
+  provider: string
+  status: string
+  message: string
+  disabled: boolean
+  unavailable: boolean
+  requiresReauth: boolean
+  nextRetryAfter: string | null
+  models: string[]
+  gatewayAccountId: string | null
+}
+
 export interface Status {
   running: boolean
   baseUrl: string
   dataDirectory: string
-  accounts: { id: string; email: string | null; status: string | null; disabled: boolean | null; unavailable: boolean | null }[]
+  accounts: GoogleAccount[]
   models: string[]
   engineVersion: string
   googleModuleVersion: string
   pendingLoginUrl: string | null
   pendingLoginProvider: 'antigravity' | 'gemini-cli' | null
+  pendingLoginAccount: string | null
   lastLoginError: string | null
 }
 

@@ -16,15 +16,15 @@ export function useGoogleLogin(onComplete: () => void) {
     try {
       const result = await request<{ status: string; message: string }>('POST', 'api/poll', {})
       if (disposed) return
-      if (result.status === 'ok') { waiting.value = false; url.value = ''; message.value = 'Google 授权完成'; onComplete(); return }
+      if (result.status === 'ok') { waiting.value = false; url.value = ''; message.value = result.message || 'Google 授权完成'; onComplete(); return }
       if (result.status === 'error') { waiting.value = false; url.value = ''; error.value = result.message; return }
       timer = setTimeout(poll, 2000)
     } catch (cause) { if (!disposed) { waiting.value = false; error.value = cause instanceof Error ? cause.message : String(cause) } }
   }
-  async function start(provider: 'antigravity' | 'gemini-cli', projectId: string) {
+  async function start(provider: 'antigravity' | 'gemini-cli', projectId: string, accountId = '') {
     error.value = ''; message.value = ''; busy.value = true
     try {
-      const result = await request<{ url: string }>('POST', 'api/login', { provider, project_id: projectId })
+      const result = await request<{ url: string }>('POST', 'api/login', { provider, project_id: projectId, account_id: accountId })
       if (disposed) return
       url.value = result.url; waiting.value = true; stop(); void poll()
     } catch (cause) { if (!disposed) error.value = cause instanceof Error ? cause.message : String(cause) }

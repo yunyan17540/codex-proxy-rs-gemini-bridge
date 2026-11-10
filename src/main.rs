@@ -1,11 +1,13 @@
 //! Gemini 管理插件的公开 SDK 会话与实例生命周期
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+mod accounts;
 mod engine;
 mod gateway;
 mod management;
 mod oauth;
 mod process;
+mod relay;
 
 use gateway_plugin_sdk::client::{
     Empty, PluginBuilder, PluginSession, SessionConfig, TypedReply, methods,

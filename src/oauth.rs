@@ -23,7 +23,11 @@ impl LoginProvider {
 
 pub fn error_message(raw: &str) -> &'static str {
     let error = raw.to_ascii_lowercase();
-    if error.contains("invalid_grant") {
+    if error.contains("authenticated account does not match target credential")
+        || error.contains("account does not match")
+    {
+        "重新授权时登录了其他 Google 账号，请使用原账号重试；原授权没有被替换。"
+    } else if error.contains("invalid_grant") {
         "Google 授权码已过期或已使用。请取消后生成新链接，完成授权后不要重复提交旧回调。"
     } else if error.contains("redirect_uri_mismatch") {
         "Google 回调地址不匹配。请重新生成授权链接，保留本机中转端口。"

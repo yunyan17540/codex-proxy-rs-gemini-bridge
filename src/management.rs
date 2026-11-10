@@ -33,6 +33,8 @@ pub fn registration() -> ManagementRegistration {
             route("POST", "api/callback"),
             route("POST", "api/cancel"),
             route("POST", "api/connect"),
+            route("POST", "api/accounts/connect"),
+            route("POST", "api/accounts/delete"),
         ],
         resources: ["web/index.html", "web/app.js", "web/app.css"]
             .into_iter()
@@ -59,6 +61,13 @@ struct Login {
     provider: crate::oauth::LoginProvider,
     #[serde(default)]
     project_id: String,
+    #[serde(default)]
+    account_id: String,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AccountAction {
+    account_id: String,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -66,16 +75,47 @@ struct Callback {
     redirect_url: String,
 }
 
-async fn status(bridge: &Bridge) -> Result<Value, PluginFault> {
-    let files = bridge
-        .call(Method::GET, "/v0/management/auth-files", None, false)
-        .await?;
-    let accounts: Vec<_> = files.get("files").and_then(Value::as_array).into_iter().flatten()
-        .filter(|a| a.get("provider").or_else(||a.get("type")).and_then(Value::as_str).is_some_and(|v| v == "gemini" || v == "gemini-cli" || v == "antigravity"))
-        .map(|a|json!({"id":a.get("id").or_else(||a.get("name")),"email":a.get("email"),"status":a.get("status"),"disabled":a.get("disabled"),"unavailable":a.get("unavailable")})).collect();
-    let models = gemini_models(&bridge.call(Method::GET, "/v1/models", None, true).await?);
+async fn status(
+    bridge: &mut Bridge,
+    host: &gateway_plugin_sdk::client::HostClient,
+) -> Result<Value, PluginFault> {
+    let google = crate::accounts::load(bridge).await?;
+    bridge.refresh_account_routes(&google)?;
+    let catalog = gateway::catalog(host).await?;
+    let mut accounts: Vec<_> = google
+        .iter()
+        .map(|account| {
+            let mut value = serde_json::to_value(account).expect("account projection");
+            value["gatewayAccountId"] = json!(gateway::connection_id(
+                &catalog,
+                &bridge.instance_id,
+                account
+            ));
+            value
+        })
+        .collect();
+    let marker = format!("local.gemini-bridge/{}/", bridge.instance_id);
+    for connection in &catalog {
+        if let Some(id) = connection
+            .get("notes")
+            .and_then(Value::as_str)
+            .and_then(|v| v.strip_prefix(&marker))
+            && crate::accounts::valid_id(id)
+            && !google.iter().any(|a| a.id == id)
+        {
+            accounts.push(json!({"id":id,"email":null,"provider":"antigravity","status":"removed","message":"本机授权已删除，可清理残留网关连接","disabled":true,"unavailable":true,"requiresReauth":false,"nextRetryAfter":null,"models":[],"gatewayAccountId":connection.get("id")}));
+        }
+    }
+    let mut models = gemini_models(&bridge.call(Method::GET, "/v1/models", None, true).await?);
+    models.extend(
+        google
+            .iter()
+            .flat_map(|account| account.models.iter().cloned()),
+    );
+    models.sort();
+    models.dedup();
     Ok(
-        json!({"running":true,"pid":bridge.process_id(),"baseUrl":format!("{}/v1",bridge.base_url()),"dataDirectory":bridge.directory,"accounts":accounts,"models":models,"pendingLoginUrl":bridge.oauth_url,"pendingLoginProvider":bridge.oauth_provider,"lastLoginError":bridge.last_login_error,"engineVersion":"8.0.60","googleModuleVersion":"1.0.5-personal.3","defaultLoginProvider":"antigravity"}),
+        json!({"running":true,"pid":bridge.process_id(),"baseUrl":format!("{}/v1",bridge.base_url()),"dataDirectory":bridge.directory,"accounts":accounts,"models":models,"pendingLoginUrl":bridge.oauth_url,"pendingLoginProvider":bridge.oauth_provider,"pendingLoginAccount":bridge.oauth_account,"lastLoginError":bridge.last_login_error,"engineVersion":"8.0.60","googleModuleVersion":"1.0.5-personal.3","defaultLoginProvider":"antigravity"}),
     )
 }
 
@@ -92,7 +132,7 @@ async fn inner(
                 return Err(fault("状态查询不能包含正文"));
             }
             bridge.ensure_started().await?;
-            status(bridge).await
+            status(bridge, &call.host).await
         }
         ("POST", "api/login") => {
             let request: Login =
@@ -111,7 +151,27 @@ async fn inner(
             if bridge.oauth_state.is_some() {
                 return Err(fault("已有授权正在等待，请先完成或取消"));
             }
+            let target = if request.account_id.is_empty() {
+                None
+            } else {
+                Some(crate::accounts::find(bridge, &request.account_id).await?)
+            };
+            if let Some(target) = &target {
+                let expected = if target.provider == "antigravity" {
+                    "antigravity"
+                } else {
+                    "gemini-cli"
+                };
+                if request.provider.key() != expected {
+                    return Err(fault("重新授权必须使用此账号原有的登录通道"));
+                }
+            }
             let mut body = json!({"provider":request.provider.key(),"is_webui":true,"proxy_url":bridge.settings.proxy_url});
+            if let Some(target) = &target {
+                body["name"] = json!(target.name);
+                body["auth_index"] = json!(target.id);
+                body["verify"] = json!(false);
+            }
             if !request.project_id.trim().is_empty() {
                 body["project_id"] = json!(request.project_id.trim());
             }
@@ -131,7 +191,7 @@ async fn inner(
                 .get("url")
                 .and_then(Value::as_str)
                 .ok_or_else(|| fault("Google 登录响应缺少授权地址"))?;
-            let parsed = url::Url::parse(auth_url).map_err(|_| fault("Google 授权地址无效"))?;
+            let mut parsed = url::Url::parse(auth_url).map_err(|_| fault("Google 授权地址无效"))?;
             if parsed.scheme() != "https" || parsed.host_str() != Some("accounts.google.com") {
                 return Err(fault("引擎返回了非 Google 官方授权地址"));
             }
@@ -145,10 +205,15 @@ async fn inner(
                 state,
                 &format!("{redirect}?state={state}"),
             )?;
+            if let Some(email) = target.as_ref().and_then(|a| a.email.as_deref()) {
+                parsed.query_pairs_mut().append_pair("login_hint", email);
+            }
+            let auth_url = parsed.to_string();
             bridge.oauth_state = Some(state.to_owned());
-            bridge.oauth_url = Some(auth_url.to_owned());
+            bridge.oauth_url = Some(auth_url.clone());
             bridge.oauth_redirect = Some(redirect);
             bridge.oauth_provider = Some(request.provider);
+            bridge.oauth_account = target.map(|a| a.id);
             bridge.last_login_error = None;
             Ok(json!({"url":auth_url,"status":"waiting"}))
         }
@@ -173,6 +238,17 @@ async fn inner(
                 );
                 bridge.last_login_error = Some(message.clone());
                 message
+            } else if state == "ok" {
+                if let Some(id) = bridge.oauth_account.clone() {
+                    match gateway::connect(&call.host, bridge, Some(&id)).await {
+                        Ok(_) => "此 Google 账号已重新授权并同步独立连接".into(),
+                        Err(_) => {
+                            "Google 授权完成；网关连接尚未同步，请点击此账号的“同步连接”".into()
+                        }
+                    }
+                } else {
+                    "Google 授权完成".into()
+                }
             } else {
                 String::new()
             };
@@ -230,8 +306,22 @@ async fn inner(
         }
         ("POST", "api/connect") => {
             bridge.ensure_started().await?;
-            let models = gemini_models(&bridge.call(Method::GET, "/v1/models", None, true).await?);
-            gateway::connect(&call.host, bridge, &models).await
+            gateway::connect(&call.host, bridge, None).await
+        }
+        ("POST", "api/accounts/connect") => {
+            let action: AccountAction =
+                serde_json::from_slice(&call.payload).map_err(|_| fault("账号操作参数无效"))?;
+            bridge.ensure_started().await?;
+            gateway::connect(&call.host, bridge, Some(&action.account_id)).await
+        }
+        ("POST", "api/accounts/delete") => {
+            let action: AccountAction =
+                serde_json::from_slice(&call.payload).map_err(|_| fault("账号操作参数无效"))?;
+            if bridge.oauth_state.is_some() {
+                return Err(fault("请先完成或取消等待中的 Google 授权"));
+            }
+            bridge.ensure_started().await?;
+            gateway::delete(&call.host, bridge, &action.account_id).await
         }
         _ => Err(fault("插件管理接口不存在")),
     }

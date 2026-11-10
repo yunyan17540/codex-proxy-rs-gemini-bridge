@@ -1,6 +1,6 @@
 [package]
 name = "gemini-bridge"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2024"
 rust-version = "1.99.1"
 license = "MIT"
@@ -11,7 +11,8 @@ gateway-plugin-sdk = { path = "vendor/gateway-plugin-sdk", features = ["io"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 tokio = { version = "1.52.3", default-features = false, features = ["io-std", "macros", "rt", "sync", "time"] }
-reqwest = { version = "0.13.2", default-features = false, features = ["json"] }
+reqwest = { version = "0.13.2", default-features = false, features = ["json", "stream"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
 uuid = { version = "1.23.4", features = ["v4"] }
 url = "2.5.8"
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_SystemInformation", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }

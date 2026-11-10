@@ -5,13 +5,17 @@ import { ZCard } from '@codex-proxy/ui/card'
 import { ZConfigProvider } from '@codex-proxy/ui/config-provider'
 import { zhHans } from '@codex-proxy/ui/locale'
 import GoogleLogin from './GoogleLogin.vue'
-import { request, type Status } from './api'
+import { request, type Status, type GoogleAccount } from './api'
 
 const state = shallowRef<Status | null>(null)
 const loading = shallowRef(false)
 const linking = shallowRef(false)
 const error = shallowRef('')
 const notice = shallowRef('')
+const login = shallowRef<InstanceType<typeof GoogleLogin> | null>(null)
+const loginPending = shallowRef(false)
+const acting = shallowRef('')
+const confirmDelete = shallowRef('')
 let disposed = false
 async function load() {
   loading.value = true; error.value = ''
@@ -24,8 +28,23 @@ async function connect() {
   try {
     const result = await request<{ groupName: string; message: string }>('POST', 'api/connect', {})
     if (!disposed) notice.value = `${result.message}：${result.groupName}`
+    await load()
   } catch (cause) { if (!disposed) error.value = cause instanceof Error ? cause.message : String(cause) }
   finally { if (!disposed) linking.value = false }
+}
+async function accountAction(account: GoogleAccount, action: 'connect' | 'delete') {
+  acting.value = account.id; error.value = ''; notice.value = ''
+  try {
+    const result = await request<{ message: string }>('POST', `api/accounts/${action}`, { account_id: account.id })
+    if (!disposed) { notice.value = result.message; confirmDelete.value = '' }
+    await load()
+  } catch (cause) { if (!disposed) error.value = cause instanceof Error ? cause.message : String(cause) }
+  finally { if (!disposed) acting.value = '' }
+}
+function reauthorize(account: GoogleAccount) {
+  confirmDelete.value = ''
+  void login.value?.reauthorize(account)
+  document.querySelector('#google-login')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 onMounted(load)
 onUnmounted(() => { disposed = true })
@@ -41,20 +60,38 @@ onUnmounted(() => { disposed = true })
             <div class="metric"><strong>{{ state?.accounts.length ?? '—' }}</strong><span>Google 账号</span></div>
             <div class="metric"><strong>{{ state?.models.length ?? '—' }}</strong><span>Gemini 模型</span></div>
           </div>
-          <ZButton :loading="loading" :disabled="linking" @click="load">刷新状态</ZButton>
+          <ZButton :loading="loading" :disabled="linking || !!acting" @click="load">刷新状态</ZButton>
         </div>
       </ZCard>
       <p v-if="error" class="error" role="alert">{{ error }}</p>
       <p v-if="notice" class="notice" role="status">{{ notice }}</p>
-      <GoogleLogin :pending-url="state?.pendingLoginUrl ?? null" :pending-provider="state?.pendingLoginProvider ?? null" :last-error="state?.lastLoginError ?? null" @complete="load" />
+      <GoogleLogin id="google-login" ref="login" :pending-url="state?.pendingLoginUrl ?? null" :pending-provider="state?.pendingLoginProvider ?? null" :pending-account="state?.accounts.find(a => a.id === state?.pendingLoginAccount) ?? null" :last-error="state?.lastLoginError ?? null" @complete="load" @pending="loginPending = $event" />
       <ZCard padding="none" class="panel">
         <h2 class="section-title">已授权账号</h2>
-        <ul v-if="state?.accounts.length" class="rows"><li v-for="account in state.accounts" :key="account.id" class="account"><div>{{ account.email || account.id }}</div><span class="muted">{{ account.disabled ? '已停用' : account.unavailable ? '暂不可用' : account.status || '已授权' }}</span></li></ul>
+        <p class="fine-print account-help">每个 Google 账号独立连接、独立统计用量。额度受限和授权失效分别处理。</p>
+        <ul v-if="state?.accounts.length" class="rows">
+          <li v-for="account in state.accounts" :key="account.id" class="account">
+            <div class="bar">
+              <div class="account-identity"><strong>{{ account.email || account.id }}</strong><span class="account-state" :class="account.status">{{ account.message }}</span></div>
+              <div class="actions">
+                <ZButton :disabled="account.status === 'removed' || loginPending || linking || !!acting" @click="reauthorize(account)">重新授权</ZButton>
+                <ZButton :disabled="account.status === 'removed' || loginPending || linking || !!acting" :loading="acting === account.id" @click="accountAction(account, 'connect')">同步连接</ZButton>
+                <ZButton :disabled="loginPending || linking || !!acting" @click="confirmDelete = account.id">删除</ZButton>
+              </div>
+            </div>
+            <p class="fine-print account-detail">{{ account.provider === 'antigravity' ? 'Antigravity' : 'Code Assist' }} · {{ account.models.length }} 个模型 · {{ account.gatewayAccountId ? '已建立独立网关连接' : '尚未连接网关' }}</p>
+            <p v-if="account.nextRetryAfter" class="fine-print">下次可重试时间：{{ new Date(account.nextRetryAfter).toLocaleString() }}</p>
+            <div v-if="confirmDelete === account.id" class="delete-confirm" role="group" :aria-label="`确认删除 ${account.email || account.id}`">
+              <p>删除此账号的本机授权和对应网关连接？删除后需要重新添加并授权，Google 账号本身不会删除。</p>
+              <div class="actions"><ZButton type="primary" :loading="acting === account.id" @click="accountAction(account, 'delete')">确认删除</ZButton><ZButton :disabled="!!acting" @click="confirmDelete = ''">取消</ZButton></div>
+            </div>
+          </li>
+        </ul>
         <p v-else class="fine-print">暂无账号，完成 Google 授权后刷新</p>
       </ZCard>
       <ZCard padding="none" class="panel">
-        <div class="bar"><h2 class="section-title">连接到现有网关</h2><ZButton type="primary" :loading="linking" :disabled="!state?.models.length || loading" @click="connect">同步模型并连接</ZButton></div>
-        <p class="fine-print">创建本插件的 Gemini 上游与独立分组，仅允许下方模型</p>
+        <div class="bar"><h2 class="section-title">连接到现有网关</h2><ZButton type="primary" :loading="linking" :disabled="!state?.accounts.length || loading || loginPending || !!acting" @click="connect">同步全部账号并连接</ZButton></div>
+        <p class="fine-print">每个 Google 账号创建一条独立上游，共用 Gemini 分组；旧版合并上游会停用并保留历史。</p>
         <div v-if="state?.models.length" class="model-list"><code v-for="model in state.models" :key="model" class="model">{{ model }}</code></div>
         <p v-else class="muted">尚无可用模型，需先完成 Google 授权</p>
       </ZCard>

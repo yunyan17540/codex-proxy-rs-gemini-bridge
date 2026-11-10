@@ -3,7 +3,7 @@
   "publisher": "local",
   "name": "gemini-bridge",
   "displayName": "Gemini 谷歌账号",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "通过本机 CLIProxyAPI 的 Antigravity / Code Assist 授权接入 Gemini 模型",
   "license": "MIT",
   "engines": {
@@ -37,6 +37,13 @@
         "type": "string",
         "title": "Google 出站代理，留空直连",
         "default": "http://127.0.0.1:7890"
+      },
+      "accountPort": {
+        "type": "integer",
+        "title": "独立账号连接端口（可选）",
+        "description": "默认使用本机中转端口加 1；与其他插件实例使用不同端口",
+        "minimum": 1024,
+        "maximum": 65535
       }
     },
     "additionalProperties": false,
